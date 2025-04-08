@@ -283,7 +283,7 @@ def update_orientation_vectors(orientations, forces, curvity, dt, rot_diffusion,
 
 @njit
 def update_curvity(positions, i, goal_position, payload_pos, payload_radius):
-    """Update the curvity of a particle. Returns True if there is line of sight. Does not use periodic boundaries for obvious reasons"""
+    """Update the curvity of a particle based on occlusion. Returns True if there is line of sight. Does not use periodic boundaries for obvious reasons"""
     # I think I can vectorize this implementation to make it faster w/ Numba
     # but I dont know if the gains are actually worth the effort.
     # Would be less readable too
@@ -318,16 +318,20 @@ def update_curvity(positions, i, goal_position, payload_pos, payload_radius):
             return False
         else:
             return True
-    
-    # For testing: if the particle is in the top half of the box, it has positive curvity. Otherwise, negative
-    # if positions[i, 1] > box_size / 2:
-    #     return 0.4
-    # else:
-    #     return -0.4
+
+# Unused
+@njit
+def update_curvity_half_box(positions, i, box_size):
+    """Updates curvity based on position. For testing purposes"""
+    # If the particle is in the top half of the box, it has positive curvity. Otherwise, negative
+    if positions[i, 1] > box_size / 2:
+        return True
+    else:
+        return False
     
 @njit
 def simulate_single_step(positions, orientations, velocities, payload_pos, payload_vel, 
-                         radii, v0s, mobilities, payload_mobility, curvity, 
+                         radii, v0s, mobilities, payload_mobility, curvity, curvity_on, curvity_off,
                          stiffness, box_size, payload_radius, dt, rot_diffusion, n_particles):
     """Simulate a single time step"""
     # Compute forces on particles and payload
@@ -346,9 +350,9 @@ def simulate_single_step(positions, orientations, velocities, payload_pos, paylo
         # Update curvity
         goal_position = [4*(box_size / 5), 4*(box_size / 5)] # static location for now, top right corner.
         if update_curvity(positions, i, goal_position, payload_pos, payload_radius):
-            curvity[i] = 0.3
+            curvity[i] = curvity_on
         else:
-            curvity[i] = -0.3
+            curvity[i] = curvity_off
         
         # Self-propulsion velocity with particle-specific v0
         self_propulsion = v0s[i] * orientations[i]
@@ -430,8 +434,8 @@ def run_payload_simulation(params):
         positions, orientations, velocities, payload_pos, payload_vel = simulate_single_step(
             positions, orientations, velocities, payload_pos, payload_vel, 
             params['particle_radius'], params['v0'], params['mobility'], params['payload_mobility'], 
-            params['curvity'], params['stiffness'], params['box_size'], params['payload_radius'], 
-            params['dt'], params['rot_diffusion'], n_particles
+            params['curvity'], params['curvity_on'], params['curvity_off'], params['stiffness'], 
+            params['box_size'], params['payload_radius'], params['dt'], params['rot_diffusion'], n_particles
         )
         
         # Save data at specified intervals
@@ -539,7 +543,7 @@ def create_payload_animation(positions, orientations, velocities, payload_positi
     )
     
     # Add parameters text
-    params_text = ax.text(-0.02, -0.065, f'n_particles: {n_particles}, curvity range: [{np.min(params["curvity"])}, {np.max(params["curvity"])}], payload radius: {payload_radius}', transform=ax.transAxes, fontsize=12,
+    params_text = ax.text(-0.02, -0.065, f'n_particles: {n_particles}, curvity with LOS: {params['curvity_on']}, curvity without LOS: {params['curvity_off']}, particle radius: {params["particle_radius"][0]}, payload radius: {payload_radius}', transform=ax.transAxes, fontsize=12,
                         verticalalignment='top')
     params_text_2 = ax.text(-0.02, -0.093, f'orientational noise: {params["rot_diffusion"][0]}, particle mobility: {params["mobility"][0]}, payload mobility: {params["payload_mobility"]}', transform=ax.transAxes, fontsize=12,
                         verticalalignment='top')
@@ -627,7 +631,9 @@ def default_payload_params(n_particles=500):
         # Particle-specific parameters
         'v0': np.ones(n_particles) * 3.75,           
         'mobility': np.ones(n_particles) * 1,    # Manually kept to 1/r
-        'curvity': np.ones(n_particles) * -0.3,     
+        'curvity': np.ones(n_particles) * -0.3,     # Curvity array for all particles. Default is all -0.3 (but doesnt matter since it gets updated every step)
+        'curvity_on': 0.3, # When there is line of sight
+        'curvity_off': -0.3, # When there is no line of sight
         'particle_radius': np.ones(n_particles) * 1, 
         'rot_diffusion': np.ones(n_particles) * 0.05, 
     }
@@ -635,7 +641,7 @@ def default_payload_params(n_particles=500):
 
 # Currently unused
 def heterogeneous_curvity(params):
-    """Make half of the particles have a positive curvity (default is currently all of them negative)."""
+    """Make a random half of the particles have a positive curvity (default is currently all of them negative)."""
     n_particles = params['n_particles']
     half_particles = n_particles // 2
     curvity = np.ones(n_particles) * params['curvity'][0]  # Use first value as baseline
@@ -654,7 +660,7 @@ def save_simulation_data(filename, positions, orientations, velocities, payload_
         velocities=velocities,
         payload_positions=payload_positions,
         payload_velocities=payload_velocities,
-        curvity_values=curvity_values,
+        curvity_values=curvity_values, # Curvity values over time, for each particle
         # Parameters
         # params['curvity'] accessible through curvity_values[-1]
         v0=params['v0'],
