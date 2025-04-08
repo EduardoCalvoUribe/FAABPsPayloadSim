@@ -618,7 +618,7 @@ def default_payload_params(n_particles=500):
         'n_particles': n_particles,    
         'box_size': 350,               
         'dt': 0.01,                  
-        'n_steps': 1000,               
+        'n_steps': 50000,               
         'save_interval': 10,            # Interval for saving data
         'payload_radius': 20.0,        
         'payload_mobility': 0.05,        # Manually kept to 1/r
