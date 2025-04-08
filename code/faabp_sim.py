@@ -16,8 +16,8 @@ import math
 from numba import njit, float64, int64
 
 # Create directories if they don't exist
-os.makedirs('data', exist_ok=True)
-os.makedirs('visualizations', exist_ok=True)
+os.makedirs('./data', exist_ok=True)
+os.makedirs('./visualizations', exist_ok=True)
 
 # Set random seed for reproducibility
 np.random.seed(42)
