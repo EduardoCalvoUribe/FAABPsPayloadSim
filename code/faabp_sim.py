@@ -283,7 +283,7 @@ def update_orientation_vectors(orientations, forces, curvity, dt, rot_diffusion,
 
 @njit
 def update_curvity(positions, i, goal_position, payload_pos, payload_radius):
-    """Update the curvity of a particle. Returns True if there is line of sight"""
+    """Update the curvity of a particle. Returns True if there is line of sight. Does not use periodic boundaries for obvious reasons"""
     # I think I can vectorize this implementation to make it faster w/ Numba
     # but I dont know if the gains are actually worth the effort.
     # Would be less readable too
@@ -314,7 +314,7 @@ def update_curvity(positions, i, goal_position, payload_pos, payload_radius):
         t1 = (-b - sqrt_discriminant) / (2 * a)
         t2 = (-b + sqrt_discriminant) / (2 * a)
         
-        if (t1 <= 0) or (t2 <= 0): #(0 <= t1 <= 1) or (0 <= t2 <= 1): # Was wrong
+        if (-1 <= t1 <= 0) or (-1 <= t2 <= 0):
             return False
         else:
             return True
@@ -400,7 +400,8 @@ def run_payload_simulation(params):
         orientations[i] = np.array([np.cos(angle), np.sin(angle)])
     
     # Initialize payload location. Bottom left corner for now
-    payload_pos = np.array([box_size/4, box_size/4 - params['payload_radius']/4])
+    payload_pos = np.array([box_size/4, box_size/4])
+    # payload_pos = np.array([box_size/2, box_size/2]) # Middle of box
     payload_vel = np.zeros(2)
     
     # Pre-allocate arrays for storing simulation data
