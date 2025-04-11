@@ -26,7 +26,7 @@ np.random.seed(42)
 # Physics utility functions  #
 ##############################
 
-@njit
+@njit # (fastmath=True)
 def normalize(v):
     """Normalize a vector to unit length."""
     norm = np.sqrt(np.sum(v**2))
@@ -34,7 +34,7 @@ def normalize(v):
         return v / norm
     return v
 
-@njit
+@njit # (fastmath=True)
 def compute_minimum_distance(pos_i, pos_j, box_size):
     """Compute minimum distance vector considering periodic boundaries."""
     # Direct vector
@@ -45,7 +45,7 @@ def compute_minimum_distance(pos_i, pos_j, box_size):
     
     return r_ij
 
-@njit
+@njit # (fastmath=True)
 def compute_repulsive_force(pos_i, pos_j, radius_i, radius_j, stiffness, box_size):
     """Compute repulsive force between two particles.
     
@@ -106,15 +106,15 @@ def create_cell_list(positions, box_size, cell_size, n_particles):
         # Get cell indices
         cell_x = min(int(positions[i, 0] / cell_size), n_cells - 1)
         cell_y = min(int(positions[i, 1] / cell_size), n_cells - 1)
-        cell_id = cell_y * n_cells + cell_x 
+        # cell_id = cell_y * n_cells + cell_x 
         # Row-major ordering, converts 2D grid coords into a 1D index.
         # Every x, y pair maps to a different number, and it's reversible
         # x = cell_id % n_cells
         # y = cell_id // n_cells
         
         # Add particle to linked list
-        list_next[i] = head[cell_id] 
-        head[cell_id] = i
+        list_next[i] = head[cell_x, cell_y] # head[cell_id]
+        head[cell_x, cell_y] = i # head[cell_id]
         
         # Example:
         
@@ -147,7 +147,7 @@ def create_cell_list(positions, box_size, cell_size, n_particles):
 ##########################
 
 # Will remove this function later. Old version without cell list optimization
-@njit
+@njit # (fastmath=True)
 def compute_all_forces(positions, payload_pos, radii, payload_radius, stiffness, n_particles, box_size):
     """OLD: Compute all forces acting on particles and the payload."""
     # Initialize forces
@@ -176,7 +176,7 @@ def compute_all_forces(positions, payload_pos, radii, payload_radius, stiffness,
     
     return particle_forces, payload_force
 
-@njit
+@njit # (fastmath=True)
 def compute_all_forces_cell_list(positions, payload_pos, radii, payload_radius, stiffness, n_particles, box_size):
     """Compute all forces acting on particles and the payload using cell list optimization."""
     # Initialize forces
@@ -211,10 +211,10 @@ def compute_all_forces_cell_list(positions, payload_pos, radii, payload_radius, 
                 # Get neighboring cell (periodic boundaries)
                 neigh_x = (cell_x + dx) % n_cells
                 neigh_y = (cell_y + dy) % n_cells
-                neigh_cell_id = neigh_y * n_cells + neigh_x # create_cell_list() uses this 1D format because it's faster with Numba
+                # neigh_cell_id = neigh_y * n_cells + neigh_x # create_cell_list() uses this 1D format because it's faster with Numba
                 
                 # Get the first particle in the neighboring cell
-                j = head[neigh_cell_id]
+                j = head[neigh_x, neigh_y] # head[neigh_cell_id]
                 
                 # Looping through all particles in this cell
                 while j != -1:
@@ -228,7 +228,7 @@ def compute_all_forces_cell_list(positions, payload_pos, radii, payload_radius, 
     return particle_forces, payload_force
 
 
-@njit
+@njit # (fastmath=True)
 def update_orientation_vectors(orientations, forces, curvity, dt, rot_diffusion, n_particles):
     """Update all particle orientations based on forces and rotational diffusion.
     The torque is calculated as:
@@ -281,9 +281,9 @@ def update_orientation_vectors(orientations, forces, curvity, dt, rot_diffusion,
     
     return new_orientations
 
-@njit
-def update_curvity(positions, i, goal_position, payload_pos, payload_radius):
-    """Update the curvity of a particle based on occlusion. Returns True if there is line of sight. Does not use periodic boundaries for obvious reasons"""
+@njit # (fastmath=True)
+def has_line_of_sight(positions, i, goal_position, payload_pos, payload_radius):
+    """Returns True if particle has line of sight with the goal, False otherwise. Does not use periodic boundaries for obvious reasons"""
     # I think I can vectorize this implementation to make it faster w/ Numba
     # but I dont know if the gains are actually worth the effort.
     # Would be less readable too
@@ -300,7 +300,7 @@ def update_curvity(positions, i, goal_position, payload_pos, payload_radius):
     fx, fy = x_p - x_i, y_p - y_i
     
     # Coefficients of quadratic equations
-    a = dx**2 + dy**2
+    a = dx**2 + dy**2 # Length of particle-goal line
     b = 2 * (fx * dx + fy * dy)
     c = fx**2 + fy**2 - payload_radius**2
     
@@ -349,10 +349,14 @@ def simulate_single_step(positions, orientations, velocities, payload_pos, paylo
         
         # Update curvity
         goal_position = [4*(box_size / 5), 4*(box_size / 5)] # static location for now, top right corner.
-        if update_curvity(positions, i, goal_position, payload_pos, payload_radius):
+        if has_line_of_sight(positions, i, goal_position, payload_pos, payload_radius):
+            # In the light
             curvity[i] = curvity_on
+            # v0s[i] = 3.75
         else:
+            # In the shadow
             curvity[i] = curvity_off
+            # v0s[i] = 7.5
         
         # Self-propulsion velocity with particle-specific v0
         self_propulsion = v0s[i] * orientations[i]
@@ -474,6 +478,8 @@ def create_payload_animation(positions, orientations, velocities, payload_positi
                             curvity_values, output_file='visualizations/payload_animation_00.mp4'):
     """Create an animation of the payload transport simulation."""
     print("Creating animation...")
+    
+    start_time = time.time()
     
     # Extract parameters
     box_size = params['box_size']
@@ -610,32 +616,36 @@ def create_payload_animation(positions, orientations, velocities, payload_positi
     
     anim.save(output_file, writer=writer)
     plt.close()
+    
+    end_time = time.time()
+    
     print(f"Animation saved as '{output_file}'")
+    print(f"Animation creation time: {end_time - start_time:.2f} seconds")
 
 #####################################################
 # Simulation configuration functions                #
 #####################################################
 
-def default_payload_params(n_particles=500):
+def default_payload_params(n_particles=1100):
     """Return default parameters for payload transport simulation"""
     return {
         # Global parameters
         'n_particles': n_particles,    
-        'box_size': 350,               
+        'box_size': 200,               
         'dt': 0.01,                  
         'n_steps': 50000,               
         'save_interval': 10,            # Interval for saving data
-        'payload_radius': 20.0,        
+        'payload_radius': 20,        
         'payload_mobility': 0.05,        # Manually kept to 1/r
         'stiffness': 50.0,              
         # Particle-specific parameters
         'v0': np.ones(n_particles) * 3.75,           
         'mobility': np.ones(n_particles) * 1,    # Manually kept to 1/r
-        'curvity': np.ones(n_particles) * -0.3,     # Curvity array for all particles. Default is all -0.3 (but doesnt matter since it gets updated every step)
+        'curvity': np.ones(n_particles) * 0.3,     # Curvity array for all particles. Default is all 0 (but doesnt matter since it gets updated every step)
         'curvity_on': 0.3, # When there is line of sight
         'curvity_off': -0.3, # When there is no line of sight
         'particle_radius': np.ones(n_particles) * 1, 
-        'rot_diffusion': np.ones(n_particles) * 0.05, 
+        'rot_diffusion': np.ones(n_particles) * 0.00005, # 0.05
     }
     
 
