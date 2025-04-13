@@ -91,51 +91,51 @@ def compute_repulsive_force(pos_i, pos_j, radius_i, radius_j, stiffness, box_siz
 
 @njit
 def create_cell_list(positions, box_size, cell_size, n_particles):
-    """Create a cell list for efficient neighbor searching. 
-    Uses a linked list implementation instead of a 2D array because it's faster with Numba!"""
+    """Create a cell list for efficient neighbor searching. Uses a linked list implementation"""
     # Calculate number of cells
     n_cells = int(np.floor(box_size / cell_size)) # cell_size is at least 2*max_radius (particle-particle max interaction)
     
     # Initialize cell lists with -1 (empty indicator)
-    head = np.ones(n_cells * n_cells, dtype=int64) * -1  # First particle in each cell
+    head = np.ones((n_cells, n_cells), dtype=int64) * -1  # First particle in each cell # n_cells * n_cells
     list_next = np.ones(n_particles, dtype=int64) * -1   # Next particle in same cell
     # fails to work without int64 for some reason
     
     # Assign particles to cells
     for i in range(n_particles):
         # Get cell indices
-        cell_x = min(int(positions[i, 0] / cell_size), n_cells - 1)
-        cell_y = min(int(positions[i, 1] / cell_size), n_cells - 1)
+        cell_x = int(positions[i, 0] / cell_size) # , n_cells - 1
+        cell_y = int(positions[i, 1] / cell_size) # , n_cells - 1
+        
         # cell_id = cell_y * n_cells + cell_x 
-        # Row-major ordering, converts 2D grid coords into a 1D index.
+        # Optionally, use row-major ordering; converts 2D grid coords into a 1D index.
         # Every x, y pair maps to a different number, and it's reversible
         # x = cell_id % n_cells
         # y = cell_id // n_cells
         
         # Add particle to linked list
-        list_next[i] = head[cell_x, cell_y] # head[cell_id]
+        list_next[i] = head[cell_x, cell_y] # head[cell_id] if row-major ordering
         head[cell_x, cell_y] = i # head[cell_id]
         
         # Example:
         
-        # Initial state: Empty cell (cell_id = 5)
-        # head[5] = -1
+        # Initial state: Empty cell (cell coords: = 1, 1)
+        # head[1, 1] = -1
         # list_next = [-1, -1, -1, ...]
 
-        # Add particle 10 to cell 5:
-        # head[5] = 10
+        # Add particle 10 to cell (1, 1):
+        # head[1, 1] = 10
         # list_next[10] = -1
 
-        # Add particle 7 to cell 5:
+        # Add particle 7 to cell (1, 1):
         # list_next[7] = 10  (7 points to 10)
-        # head[5] = 7        (7 is new head)
+        # head[1, 1] = 7        (7 is new head)
 
-        # Add particle 3 to cell 5:
+        # Add particle 3 to cell (1, 1):
         # list_next[3] = 7   (3 points to 7)
-        # head[5] = 3        (3 is new head)
+        # head[1, 1] = 3        (3 is new head)
         
-        # Later, when we want to find all particles in cell 5, we can start at head[5] and follow the links:
-        # j = head[5]
+        # Later, when we want to find all particles in cell (1, 1), we can start at head[1, 1] and follow the links:
+        # j = head[1, 1]
         # while j != -1:
         #     # Do something with j
         #     j = list_next[j]
@@ -187,7 +187,7 @@ def compute_all_forces_cell_list(positions, payload_pos, radii, payload_radius, 
     max_radius = np.max(radii) # Takes maximum radius of all particles. (Because radius of particles is possibly heterogeneous)
     cell_size = 2 * max_radius  # For particle-particle interactions (not payload-particle)
     
-    # Create cell list
+    # Create cell list (O(N))
     head, list_next, n_cells = create_cell_list(positions, box_size, cell_size, n_particles)
     
     # Compute forces between particles and payload (O(N))
@@ -202,8 +202,8 @@ def compute_all_forces_cell_list(positions, payload_pos, radii, payload_radius, 
     # For each particle
     for i in range(n_particles):
         # Find which cell it belongs to
-        cell_x = min(int(positions[i, 0] / cell_size), n_cells - 1)
-        cell_y = min(int(positions[i, 1] / cell_size), n_cells - 1)
+        cell_x = int(positions[i, 0] / cell_size)
+        cell_y = int(positions[i, 1] / cell_size)
         
         # Check neighboring cells (including own cell)
         for dx in range(-1, 2):  # -1, 0, 1
@@ -211,7 +211,7 @@ def compute_all_forces_cell_list(positions, payload_pos, radii, payload_radius, 
                 # Get neighboring cell (periodic boundaries)
                 neigh_x = (cell_x + dx) % n_cells
                 neigh_y = (cell_y + dy) % n_cells
-                # neigh_cell_id = neigh_y * n_cells + neigh_x # create_cell_list() uses this 1D format because it's faster with Numba
+                # neigh_cell_id = neigh_y * n_cells + neigh_x  #in case you use row-major ordering
                 
                 # Get the first particle in the neighboring cell
                 j = head[neigh_x, neigh_y] # head[neigh_cell_id]
@@ -495,7 +495,7 @@ def create_payload_animation(positions, orientations, velocities, payload_positi
     ax.set_title('FAABP Cooperative Transport Simulation')
     ax.grid(True, alpha=0.3)
     
-    # Map color of particle based on curvity sign
+    # Color of particle based on curvity value
     def get_particle_color(curvity_value):
         return 'red' if curvity_value > 0 else 'darkblue'
     
@@ -626,26 +626,26 @@ def create_payload_animation(positions, orientations, velocities, payload_positi
 # Simulation configuration functions                #
 #####################################################
 
-def default_payload_params(n_particles=1100):
+def default_payload_params(n_particles=1000):
     """Return default parameters for payload transport simulation"""
     return {
         # Global parameters
         'n_particles': n_particles,    
-        'box_size': 200,               
+        'box_size': 350,               
         'dt': 0.01,                  
-        'n_steps': 50000,               
+        'n_steps': 10000,               
         'save_interval': 10,            # Interval for saving data
         'payload_radius': 20,        
         'payload_mobility': 0.05,        # Manually kept to 1/r
-        'stiffness': 50.0,              
+        'stiffness': 25.0,              
         # Particle-specific parameters
         'v0': np.ones(n_particles) * 3.75,           
         'mobility': np.ones(n_particles) * 1,    # Manually kept to 1/r
-        'curvity': np.ones(n_particles) * 0.3,     # Curvity array for all particles. Default is all 0 (but doesnt matter since it gets updated every step)
+        'curvity': np.ones(n_particles) * 0,     # Curvity array for all particles. Default is all 0 (but doesnt matter since it gets updated every step)
         'curvity_on': 0.3, # When there is line of sight
         'curvity_off': -0.3, # When there is no line of sight
         'particle_radius': np.ones(n_particles) * 1, 
-        'rot_diffusion': np.ones(n_particles) * 0.00005, # 0.05
+        'rot_diffusion': np.ones(n_particles) * 0.05, # 0.05
     }
     
 
