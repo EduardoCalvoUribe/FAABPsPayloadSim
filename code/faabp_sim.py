@@ -148,7 +148,7 @@ def create_cell_list(positions, box_size, cell_size, n_particles):
 
 # Will remove this function later. Old version without cell list optimization
 @njit # (fastmath=True)
-def compute_all_forces(positions, payload_pos, radii, payload_radius, stiffness, n_particles, box_size):
+def compute_all_forces_old(positions, payload_pos, radii, payload_radius, stiffness, n_particles, box_size):
     """OLD: Compute all forces acting on particles and the payload."""
     # Initialize forces
     particle_forces = np.zeros((n_particles, 2))
@@ -177,8 +177,8 @@ def compute_all_forces(positions, payload_pos, radii, payload_radius, stiffness,
     return particle_forces, payload_force
 
 @njit # (fastmath=True)
-def compute_all_forces_cell_list(positions, payload_pos, radii, payload_radius, stiffness, n_particles, box_size):
-    """Compute all forces acting on particles and the payload using cell list optimization."""
+def compute_all_forces(positions, payload_pos, radii, payload_radius, stiffness, n_particles, box_size):
+    """Compute all forces acting on particles and the payload"""
     # Initialize forces
     particle_forces = np.zeros((n_particles, 2)) # Initialize force array for particles
     payload_force = np.zeros(2) # Initialize force array for payload
@@ -335,7 +335,7 @@ def simulate_single_step(positions, orientations, velocities, payload_pos, paylo
                          stiffness, box_size, payload_radius, dt, rot_diffusion, n_particles):
     """Simulate a single time step"""
     # Compute forces on particles and payload
-    particle_forces, payload_force = compute_all_forces_cell_list(
+    particle_forces, payload_force = compute_all_forces(
         positions, payload_pos, radii, payload_radius, stiffness, n_particles, box_size
     )
     
