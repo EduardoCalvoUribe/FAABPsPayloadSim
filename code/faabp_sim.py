@@ -227,8 +227,11 @@ def compute_all_forces(positions, payload_pos, radii, payload_radius, stiffness,
     
     return particle_forces, payload_force
 
-
-@njit # (fastmath=True)
+# parallel = False; 42.21 seconds # using this one now
+# parallel = True; veeeeery long, stopped early
+# parallel = True with prange; 51.38 seconds
+# parallel = False with prange; 65.575 seconds
+@njit(parallel=False)
 def update_orientation_vectors(orientations, forces, curvity, dt, rot_diffusion, n_particles):
     """Update all particle orientations based on forces and rotational diffusion.
     The torque is calculated as:
@@ -688,9 +691,14 @@ def save_simulation_data(filename, positions, orientations, velocities, payload_
 #####################
 
 if __name__ == "__main__":
+    
+    # Run short simulation to trigger numba compilation
+    params = default_payload_params()    
+    params['n_steps'] = 10
+    run_payload_simulation(params)
+    
     # Set simulation parameters
     params = default_payload_params()
-    # params = heterogeneous_curvity(params) # This randomly sets half of the particles to a positive curvity. Just for some early testing
 
     # Run simulation
     positions, orientations, velocities, payload_positions, payload_velocities, curvity_values = run_payload_simulation(params)
