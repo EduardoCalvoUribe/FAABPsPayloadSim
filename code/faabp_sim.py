@@ -15,9 +15,7 @@ import os
 import math
 from numba import njit, float64, int64
 
-# Create directories if they don't exist
-os.makedirs('./data', exist_ok=True)
-os.makedirs('./visualizations', exist_ok=True)
+
 
 # Set random seed for reproducibility
 np.random.seed(42)
@@ -26,7 +24,7 @@ np.random.seed(42)
 # Physics utility functions  #
 ##############################
 
-@njit # (fastmath=True)
+@njit(fastmath=True)
 def normalize(v):
     """Normalize a vector to unit length."""
     norm = np.sqrt(np.sum(v**2))
@@ -34,7 +32,7 @@ def normalize(v):
         return v / norm
     return v
 
-@njit # (fastmath=True)
+@njit(fastmath=True)
 def compute_minimum_distance(pos_i, pos_j, box_size):
     """Compute minimum distance vector considering periodic boundaries."""
     # Direct vector
@@ -45,7 +43,7 @@ def compute_minimum_distance(pos_i, pos_j, box_size):
     
     return r_ij
 
-@njit # (fastmath=True)
+@njit(fastmath=True)
 def compute_repulsive_force(pos_i, pos_j, radius_i, radius_j, stiffness, box_size):
     """Compute repulsive force between two particles.
     
@@ -89,7 +87,7 @@ def compute_repulsive_force(pos_i, pos_j, radius_i, radius_j, stiffness, box_siz
     # No force if particles don't overlap
     return np.zeros(2)
 
-@njit
+@njit(fastmath=True)
 def create_cell_list(positions, box_size, cell_size, n_particles):
     """Create a cell list for efficient neighbor searching. Uses a linked list implementation"""
     # Calculate number of cells
@@ -176,7 +174,7 @@ def compute_all_forces_old(positions, payload_pos, radii, payload_radius, stiffn
     
     return particle_forces, payload_force
 
-@njit # (fastmath=True)
+@njit(fastmath=True)
 def compute_all_forces(positions, payload_pos, radii, payload_radius, stiffness, n_particles, box_size):
     """Compute all forces acting on particles and the payload"""
     # Initialize forces
@@ -227,11 +225,7 @@ def compute_all_forces(positions, payload_pos, radii, payload_radius, stiffness,
     
     return particle_forces, payload_force
 
-# parallel = False; 42.21 seconds # using this one now
-# parallel = True; veeeeery long, stopped early
-# parallel = True with prange; 51.38 seconds
-# parallel = False with prange; 65.575 seconds
-@njit(parallel=False)
+@njit(fastmath=True)
 def update_orientation_vectors(orientations, forces, curvity, dt, rot_diffusion, n_particles):
     """Update all particle orientations based on forces and rotational diffusion.
     The torque is calculated as:
@@ -284,7 +278,7 @@ def update_orientation_vectors(orientations, forces, curvity, dt, rot_diffusion,
     
     return new_orientations
 
-@njit # (fastmath=True)
+@njit(fastmath=True)
 def has_line_of_sight(positions, i, goal_position, payload_pos, payload_radius):
     """Returns True if particle has line of sight with the goal, False otherwise. Does not use periodic boundaries for obvious reasons"""
     # I think I can vectorize this implementation to make it faster w/ Numba
@@ -295,6 +289,19 @@ def has_line_of_sight(positions, i, goal_position, payload_pos, payload_radius):
     x_i, y_i = positions[i]
     x_goal, y_goal = goal_position
     x_p, y_p = payload_pos
+    
+    # Quick bounding box check
+    min_x = min(x_i, x_goal) - 0.001
+    max_x = max(x_i, x_goal) + 0.001
+    min_y = min(y_i, y_goal) - 0.001
+    max_y = max(y_i, y_goal) + 0.001
+    
+    # If payload is outside bounding box (plus radius), it can't intersect
+    if (x_p - payload_radius > max_x or 
+        x_p + payload_radius < min_x or
+        y_p - payload_radius > max_y or
+        y_p + payload_radius < min_y):
+        return True
     
     # Direction vector: particle to goal
     dx, dy = x_goal - x_i, y_goal - y_i
@@ -332,7 +339,7 @@ def update_curvity_half_box(positions, i, box_size):
     else:
         return False
     
-@njit
+@njit(fastmath=True)
 def simulate_single_step(positions, orientations, velocities, payload_pos, payload_vel, 
                          radii, v0s, mobilities, payload_mobility, curvity, curvity_on, curvity_off,
                          stiffness, box_size, payload_radius, dt, rot_diffusion, n_particles):
@@ -355,11 +362,11 @@ def simulate_single_step(positions, orientations, velocities, payload_pos, paylo
         if has_line_of_sight(positions, i, goal_position, payload_pos, payload_radius):
             # In the light
             curvity[i] = curvity_on
-            # v0s[i] = 3.75
+            # v0s[i] = v_on
         else:
             # In the shadow
             curvity[i] = curvity_off
-            # v0s[i] = 7.5
+            # v0s[i] = v_off
         
         # Self-propulsion velocity with particle-specific v0
         self_propulsion = v0s[i] * orientations[i]
@@ -390,9 +397,6 @@ def simulate_single_step(positions, orientations, velocities, payload_pos, paylo
 def run_payload_simulation(params):
     """Run the complete payload transport simulation."""
     print(f"Running payload transport simulation with {params['n_particles']} particles for {params['n_steps']} steps...")
-    # print(f"Curvity range: {np.min(params['curvity'])} to {np.max(params['curvity'])}")
-    # print(f"Payload radius: {params['payload_radius']}")
-    # print(f"Rotational diffusion: {params['rot_diffusion']}, Self-propulsion speed: {np.mean(params['v0'])}")
     
     # Initialize arrays
     n_particles = params['n_particles']
@@ -412,8 +416,10 @@ def run_payload_simulation(params):
     
     # Initialize payload location. Bottom left corner for now
     payload_pos = np.array([box_size/4, box_size/4])
-    # payload_pos = np.array([box_size/2, box_size/2]) # Middle of box
     payload_vel = np.zeros(2)
+    
+    # Define goal position (currently hardcoded)
+    goal_position = np.array([4*(box_size / 5), 4*(box_size / 5)])
     
     # Pre-allocate arrays for storing simulation data
     n_saves = n_steps // save_interval + 1
@@ -445,6 +451,27 @@ def run_payload_simulation(params):
             params['box_size'], params['payload_radius'], params['dt'], params['rot_diffusion'], n_particles
         )
         
+        # Check if payload has reached goal for early stopping
+        distance_to_goal = np.sqrt(np.sum((payload_pos - goal_position)**2))
+        if distance_to_goal <= params['payload_radius']:
+            print(f"Goal reached at step {step}!")
+            # Save final state
+            saved_positions[save_idx] = positions
+            saved_orientations[save_idx] = orientations
+            saved_velocities[save_idx] = velocities
+            saved_payload_positions[save_idx] = payload_pos
+            saved_payload_velocities[save_idx] = payload_vel
+            saved_curvity[save_idx] = params['curvity'].copy()
+            save_idx += 1
+            # Trim arrays to actual size
+            saved_positions = saved_positions[:save_idx]
+            saved_orientations = saved_orientations[:save_idx]
+            saved_velocities = saved_velocities[:save_idx]
+            saved_payload_positions = saved_payload_positions[:save_idx]
+            saved_payload_velocities = saved_payload_velocities[:save_idx]
+            saved_curvity = saved_curvity[:save_idx]
+            break
+        
         # Save data at specified intervals
         if step % save_interval == 0:
             saved_positions[save_idx] = positions
@@ -474,7 +501,8 @@ def run_payload_simulation(params):
         saved_velocities, 
         saved_payload_positions, 
         saved_payload_velocities,
-        saved_curvity
+        saved_curvity,
+        end_time - start_time
     )
 
 def create_payload_animation(positions, orientations, velocities, payload_positions, params, 
@@ -512,18 +540,6 @@ def create_payload_animation(positions, orientations, velocities, payload_positi
         alpha=0.7
     )
     
-    # Removed arrows for now
-    # quiver = ax.quiver(
-    #     positions[0, :, 0],
-    #     positions[0, :, 1],
-    #     orientations[0, :, 0],
-    #     orientations[0, :, 1],
-    #     scale=0.1,
-    #     width=0.002,
-    #     alpha=0.2,
-    #     color='red'
-    # )
-    
     # Create payload
     payload = Circle(
         (payload_positions[0, 0], payload_positions[0, 1]),
@@ -552,7 +568,7 @@ def create_payload_animation(positions, orientations, velocities, payload_positi
     )
     
     # Add parameters text
-    params_text = ax.text(-0.02, -0.065, f'n_particles: {n_particles}, curvity with LOS: {params['curvity_on']}, curvity without LOS: {params['curvity_off']}, particle radius: {params["particle_radius"][0]}, payload radius: {payload_radius}', transform=ax.transAxes, fontsize=12,
+    params_text = ax.text(-0.02, -0.065, f'n_particles: {n_particles}, curvity with LOS: {params["curvity_on"]}, curvity without LOS: {params["curvity_off"]}, particle radius: {params["particle_radius"][0]}, payload radius: {payload_radius}', transform=ax.transAxes, fontsize=12,
                         verticalalignment='top')
     params_text_2 = ax.text(-0.02, -0.093, f'orientational noise: {params["rot_diffusion"][0]}, particle mobility: {params["mobility"][0]}, payload mobility: {params["payload_mobility"]}', transform=ax.transAxes, fontsize=12,
                         verticalalignment='top')
@@ -629,26 +645,26 @@ def create_payload_animation(positions, orientations, velocities, payload_positi
 # Simulation configuration functions                #
 #####################################################
 
-def default_payload_params(n_particles=1000):
+def default_payload_params(n_particles=1000, curvity_on=0.3, curvity_off=-0.3, payload_radius=20):
     """Return default parameters for payload transport simulation"""
     return {
         # Global parameters
         'n_particles': n_particles,    
         'box_size': 350,               
         'dt': 0.01,                  
-        'n_steps': 10000,               
+        'n_steps': 150000,               
         'save_interval': 10,            # Interval for saving data
-        'payload_radius': 20,        
+        'payload_radius': payload_radius,        
         'payload_mobility': 0.05,        # Manually kept to 1/r
         'stiffness': 25.0,              
         # Particle-specific parameters
         'v0': np.ones(n_particles) * 3.75,           
         'mobility': np.ones(n_particles) * 1,    # Manually kept to 1/r
         'curvity': np.ones(n_particles) * 0,     # Curvity array for all particles. Default is all 0 (but doesnt matter since it gets updated every step)
-        'curvity_on': 0.3, # When there is line of sight
-        'curvity_off': -0.3, # When there is no line of sight
+        'curvity_on': curvity_on, # When there is line of sight
+        'curvity_off': curvity_off, # When there is no line of sight
         'particle_radius': np.ones(n_particles) * 1, 
-        'rot_diffusion': np.ones(n_particles) * 0.05, # 0.05
+        'rot_diffusion': np.ones(n_particles) * 0.05 # 0.05
     }
     
 
@@ -686,36 +702,83 @@ def save_simulation_data(filename, positions, orientations, velocities, payload_
         stiffness=params['stiffness']
     )
 
+def extract_simulation_data(filename):
+    """Extract simulation data from a file."""
+    data = np.load(filename)
+    return data
+
 #####################
 # Main execution    #
 #####################
 
 if __name__ == "__main__":
     
+    # Create directories if they don't exist
+    # os.makedirs('./data', exist_ok=True)
+    # os.makedirs('./visualizations', exist_ok=True)
+    # os.makedirs('./logs', exist_ok=True)
+    
     # Run short simulation to trigger numba compilation
     params = default_payload_params()    
     params['n_steps'] = 10
     run_payload_simulation(params)
-    
-    # Set simulation parameters
-    params = default_payload_params()
 
-    # Run simulation
-    positions, orientations, velocities, payload_positions, payload_velocities, curvity_values = run_payload_simulation(params)
-    
-    # Save timestamp to use in filenames
-    T = int(time.time())
+
+    params = default_payload_params(n_particles=1200, curvity_on=1, curvity_off=0.1, payload_radius=30)
+    positions, orientations, velocities, payload_positions, payload_velocities, curvity_values, runtime = run_payload_simulation(params)
     
     # Save simulation data
     save_simulation_data(
-        # Include timestamp in filename
-        'data/payload_simulation_data_{timestamp}.npz'.format(timestamp=T),
-        positions, orientations, velocities, payload_positions, payload_velocities, params,
-        curvity_values
+        f'D:/ThesisData/data/tests/sim_data_cOn_{1}_cOff_{0.1}_pradius_{30}.npz',
+        positions, orientations, velocities, payload_positions, payload_velocities, params, curvity_values
     )
     
-    # Create animation with frame-specific curvity values
+    # Create animation
     create_payload_animation(positions, orientations, velocities, payload_positions, params, 
-                             curvity_values, 'visualizations/payload_animation_{timestamp}.mp4'.format(timestamp=T))
+                                curvity_values, f'D:/ThesisData/visualizations/tests/sim_animation_cOn_{1}_cOff_{0.1}_pradius_{30}.mp4')
+
+
+    # Run simulations
+    # for payload_radius in [1.5]: # 18.7, 14.4, 10.1, 5.8, 
+    #     for curvity_on in [-1]: # 1, 0.8, 0.6, 0.4, 0.2, 0, -0.2, -0.4, -0.6, -0.8, 
+    #         for curvity_off in [0.4, 0.6, 0.8, 1]: # -1, -0.8, -0.6, -0.4, -0.2, 0, 0.2, 
+    #             params = default_payload_params(curvity_on=curvity_on, curvity_off=curvity_off, payload_radius=payload_radius)
+    #             positions, orientations, velocities, payload_positions, payload_velocities, curvity_values, runtime = run_payload_simulation(params)
+                
+    #             # Save simulation data
+    #             save_simulation_data(
+    #                 f'D:/ThesisData/data/dynamic_curvity/sim_data_cOn_{curvity_on}_cOff_{curvity_off}_pradius_{payload_radius}.npz',
+    #                 positions, orientations, velocities, payload_positions, payload_velocities, params, curvity_values
+    #             )
+                
+    #             # Create animation
+    #             # create_payload_animation(positions, orientations, velocities, payload_positions, params, 
+    #             #                             curvity_values, f'D:/ThesisData/visualizations/dynamic_curvity/sim_animation_cOn_{curvity_on}_cOff_{curvity_off}_pradius_{payload_radius}.mp4')
+
+                
+    
+    # Timestamp
+    # T = int(time.time())
+    
+    # Create log file
+    # log_file = f'./logs/log_{T}.txt'
+    # with open(log_file, 'a') as f:
+        # f.write("DEFAULT SETTINGS\n")
+        # f.write(f"Timestamp: {T}\n")
+        # f.write(f"Params: {params}\n")
+        # f.write(f"All runtimes: {runtimes}\n")
+        # f.write(f"Average runtime: {np.mean(runtimes)}\n")
+    
+    # Save simulation data
+    # save_simulation_data(
+    #     # Include timestamp in filename
+    #     'data/sim_data_{timestamp}.npz'.format(timestamp=T),
+    #     positions, orientations, velocities, payload_positions, payload_velocities, params,
+    #     curvity_values
+    # )
+    
+    # Create animation with frame-specific curvity values
+    # create_payload_animation(positions, orientations, velocities, payload_positions, params, 
+    #                          curvity_values, 'visualizations/sim_animation_{timestamp}.mp4'.format(timestamp=T))
     
     print("Payload simulation and animation completed successfully!")
